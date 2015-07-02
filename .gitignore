@@ -1,0 +1,6 @@
+prepopulate_auth_configs.zip
+*.pyc
+.idea
+package
+doc/build
+doc/source/api

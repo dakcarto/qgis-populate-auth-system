@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/plugins/populateauthsystem" >
+        <file>icon.png</file>
+        <file>images/certificate.png</file>
+        <file>images/certificate_trusted.png</file>
+        <file>images/certificate_trusted_48.png</file>
+    </qresource>
+</RCC>
