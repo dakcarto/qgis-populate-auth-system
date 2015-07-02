@@ -47,6 +47,13 @@ p, li { white-space: pre-wrap; }
     </widget>
    </item>
    <item>
+    <widget class="QCheckBox" name="chkbxMultiple">
+     <property name="text">
+      <string>Import multiple identities</string>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QCheckBox" name="chkbxCaFile">
      <property name="text">
       <string>Import extra Certificate Authority file</string>

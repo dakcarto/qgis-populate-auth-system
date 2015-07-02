@@ -24,11 +24,13 @@
 import os
 import shutil
 
-from qgis.gui import QgisInterface, QgsDialog
-from PyQt4.QtCore import QSettings, qVersion, QCoreApplication, qDebug, QSize, \
-    Qt
-from PyQt4.QtGui import QAction, QIcon, QPlainTextEdit, QDialogButtonBox, \
-    QMessageBox, QBoxLayout, QHBoxLayout, QLabel, QSizePolicy, QPixmap
+from qgis.core import QgsAuthManager
+from qgis.gui import QgisInterface, QgsDialog, QgsMessageBar
+from PyQt4.QtCore import QSettings, qVersion, QCoreApplication, qDebug, \
+    QSize, Qt
+from PyQt4.QtGui import QMainWindow, QAction, QIcon, QPlainTextEdit, \
+    QDialogButtonBox, QMessageBox, QBoxLayout, QHBoxLayout, QLabel, \
+    QSizePolicy, QPixmap
 # Initialize Qt resources from resources_rc.py (compiled from resources.qrc)
 import resources_rc
 # Import the code for the dialog
@@ -52,6 +54,9 @@ class PopulateAuthSystem:
         """:type : QgsInterface"""
         self.mw = iface.mainWindow()
         """:type : QMainWindow"""
+        self.msgbar = self.iface.messageBar()
+        """:type : QgsMessageBar"""
+
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
 
@@ -113,9 +118,10 @@ class PopulateAuthSystem:
         end of app launch, not after (like when loading via Plugin Manager).
         """
         # Initialize the auth system module
-        authsys = AuthSystem(self.iface)
-        if (not authsys.authm.masterPasswordHashInDb()
-                or not authsys.authm.getCertIdentities()):
+        authsys = AuthSystem(qgis_iface=self.iface)
+        # noinspection PyArgumentList
+        if (not QgsAuthManager.instance().masterPasswordHashInDb()
+                or not QgsAuthManager.instance().getCertIdentities()):
 
             msg = ("Continue with semi-automated population of"
                    " authentication database?\n\n"
@@ -129,13 +135,24 @@ class PopulateAuthSystem:
 
             if os.path.exists(authsys.PKI_DIR) and dlg.exec_():
 
-                if authsys.CA_CERTS is not None:
-                    authsys.populate_ca_certs(from_filesys=True)
+                if not authsys.populate_ca_certs(from_filesys=True):
+                    self.msgbar.pushWarning(
+                        self.title, "Error populating CA certs")
+                    return  # so PKI_DIR is not deleted
+                if not authsys.populate_identities(from_filesys=True):
+                    self.msgbar.pushWarning(
+                        self.title, "Error populating identities")
+                    return  # so PKI_DIR is not deleted
 
-                authsys.populate_identities(from_filesys=True)
-
-                authsys.populate_servers()
-                # authsys.config_ows_connections()
+                # these can fail (user notified), but should not stop population
+                if authsys.ADD_OWS_CONNECTIONS and \
+                        not authsys.config_ows_connections(from_filesys=True):
+                    self.msgbar.pushWarning(
+                        self.title, "Error populating OWS connections")
+                if authsys.ADD_SSL_SERVERS \
+                        and not authsys.populate_servers(from_filesys=True):
+                    self.msgbar.pushWarning(
+                        self.title, "Error populating SSL server configs ")
 
                 if authsys.DELETE_PKI_DIR:
                     shutil.rmtree(authsys.PKI_DIR, ignore_errors=True)
