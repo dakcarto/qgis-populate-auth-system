@@ -25,17 +25,13 @@ import os
 import shutil
 
 from qgis.core import QgsAuthManager
-from qgis.gui import QgisInterface, QgsDialog, QgsMessageBar
-from PyQt4.QtCore import QSettings, qVersion, QCoreApplication, qDebug, \
-    QSize, Qt
-from PyQt4.QtGui import QMainWindow, QAction, QIcon, QPlainTextEdit, \
-    QDialogButtonBox, QMessageBox, QBoxLayout, QHBoxLayout, QLabel, \
-    QSizePolicy, QPixmap
+from qgis.gui import QgisInterface
+from PyQt4.QtCore import QSettings, qVersion, QCoreApplication
+from PyQt4.QtGui import QMainWindow, QAction, QIcon
 # Initialize Qt resources from resources_rc.py (compiled from resources.qrc)
 import resources_rc
 # Import the code for the dialog
 from populate_auth_system_dialog import PopulateAuthSystemDialog
-from qgis_auth_system import AuthSystem
 
 
 class PopulateAuthSystem:
@@ -54,8 +50,6 @@ class PopulateAuthSystem:
         """:type : QgsInterface"""
         self.mw = iface.mainWindow()
         """:type : QMainWindow"""
-        self.msgbar = self.iface.messageBar()
-        """:type : QgsMessageBar"""
 
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
@@ -94,7 +88,7 @@ class PopulateAuthSystem:
         :rtype: QString
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
-        return QCoreApplication.translate('populateauthsystem', message)
+        return QCoreApplication.translate('PopulateAuthSystem', message)
 
     # noinspection PyPep8Naming
     def initGui(self):
@@ -102,7 +96,7 @@ class PopulateAuthSystem:
 
         icon_path = ':/plugins/populateauthsystem/icon.png'
         icon = QIcon(icon_path)
-        self.action = QAction(icon, self.tr(u'Run'),
+        self.action = QAction(icon, self.tr(u'Manual run'),
                               self.iface.mainWindow())
         self.action.triggered.connect(self.run_gui)
 
@@ -117,97 +111,21 @@ class PopulateAuthSystem:
         Semi-automated pre-population with minimal user interaction, but only at
         end of app launch, not after (like when loading via Plugin Manager).
         """
-        # Initialize the auth system module
-        authsys = AuthSystem(qgis_iface=self.iface)
         # noinspection PyArgumentList
         if (not QgsAuthManager.instance().masterPasswordHashInDb()
                 or not QgsAuthManager.instance().getCertIdentities()):
-
-            msg = ("Continue with semi-automated population of"
-                   " authentication database?\n\n"
-                   "(You will need to enter a master password and "
-                   "any password for PKI components)\n\n"
-                   "You can run '{0}' from the Plugins menu later, at any time."
-                   .format(self.title))
-            dlg = self.dialog(
-                msg, buttons=QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-            dlg.resize(400, 320)
-
-            if os.path.exists(authsys.PKI_DIR) and dlg.exec_():
-
-                if not authsys.populate_ca_certs(from_filesys=True):
-                    self.msgbar.pushWarning(
-                        self.title, "Error populating CA certs")
-                    return  # so PKI_DIR is not deleted
-                if not authsys.populate_identities(from_filesys=True):
-                    self.msgbar.pushWarning(
-                        self.title, "Error populating identities")
-                    return  # so PKI_DIR is not deleted
-
-                # these can fail (user notified), but should not stop population
-                if authsys.ADD_OWS_CONNECTIONS and \
-                        not authsys.config_ows_connections(from_filesys=True):
-                    self.msgbar.pushWarning(
-                        self.title, "Error populating OWS connections")
-                if authsys.ADD_SSL_SERVERS \
-                        and not authsys.populate_servers(from_filesys=True):
-                    self.msgbar.pushWarning(
-                        self.title, "Error populating SSL server configs ")
-
-                if authsys.DELETE_PKI_DIR:
-                    shutil.rmtree(authsys.PKI_DIR, ignore_errors=True)
-
-                self.show_results(authsys.population_results())
+            authdlg = PopulateAuthSystemDialog(parent=self.mw,
+                                               qgis_iface=self.iface,
+                                               title=self.title,
+                                               init_run=True)
+            authdlg.exec_()
 
     def run_gui(self):
         """
         Pre-population with full user interaction.
         """
-        # show the dialog
-        # Create the dialog (after translation) and keep reference
-        authdlg = PopulateAuthSystemDialog(self.title, self.mw)
-        authdlg.show()
-        # Run the dialog event loop
-        result = authdlg.exec_()
-        # See if OK was pressed
-        if result:
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code.
-            pass
-
-    def show_results(self, res):
-        if res != "":
-            msg = "{0}\n\n{1}".format(
-                self.tr("Authentication database changes were made"), res)
-            dlg = self.dialog(msg)
-            dlg.resize(500, 480)
-            dlg.exec_()
-
-    def dialog(self, msg, buttons=QDialogButtonBox.Close):
-        # noinspection PyArgumentList
-        dlg = QgsDialog(self.mw, buttons=buttons)
-        """:type: QgsDialog"""
-        dlg.setMinimumSize(QSize(320, 320))
-        # dlg.setWindowTitle(self.title)
-        dlglyout = dlg.layout()
-        """:type: QBoxLayout"""
-
-        # icon and title
-        hlayout = QHBoxLayout(dlg)
-        hlayout.setSpacing(20)
-        lblicon = QLabel(dlg)
-        lblicon.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-        lblicon.setPixmap(
-            QPixmap(':/plugins/populateauthsystem/images/'
-                    'certificate_trusted_48.png'))
-        hlayout.addWidget(lblicon)
-        lbltxt = QLabel(self.title, dlg)
-        hlayout.addWidget(lbltxt)
-        dlglyout.addLayout(hlayout)
-
-        # text area
-        txtedit = QPlainTextEdit(dlg)
-        txtedit.setReadOnly(True)
-        txtedit.setPlainText(msg)
-        dlglyout.addWidget(txtedit)
-        return dlg
+        authdlg = PopulateAuthSystemDialog(parent=self.mw,
+                                           qgis_iface=self.iface,
+                                           title=self.title,
+                                           init_run=False)
+        authdlg.exec_()

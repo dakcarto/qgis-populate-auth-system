@@ -61,7 +61,7 @@ class AuthSystem:
 
     # If using a standard password for temporary PKCS files, set it here.
     # NOTE: this is not a wise strategy
-    PKCS_PASS = 'password'
+    PKCS_PASS = ''  # OR  = ''
 
     # Whether to delete the PKI_DIR after successful semi-automated population
     # NOTE: recommended to delete, or else the PKI components might be loaded at
@@ -144,7 +144,8 @@ class AuthSystem:
         qgis-auth.db. This also verifies the set password by comparing password
         against its derived hash stored in auth db.
 
-        :return: bool Whether it is set or verifies
+        :return: Whether it is set or verifies
+        :rtype: bool
         """
         # noinspection PyArgumentList
         res = QgsAuthManager.instance().setMasterPassword(True)
@@ -153,33 +154,60 @@ class AuthSystem:
                      "Canceling operation.")
         return res
 
-    def populate_identities(self, multiple=False, from_filesys=False):
+    def populate_identities(self, multiple=False, from_filesys=False,
+                            password_dlg_func=None):
         """
         Import certificate-based identities into authentication database.
         Any CA cert chains contained in any PKCS#12 file will also be added.
 
-        :param multiple: bool Whether to offer import multiple times
-        :param from_filesys: bool Skip user interaction and load from filesystem
+        :param multiple: Whether to offer import dialog multiple times during
+        fully user-interactive session
+        :type multiple: bool
+        :param from_filesys: Skip user interaction and load from filesystem
+        :type from_filesys: bool
+        :param password_dlg_func: Callback(parent, message) that returns a
+        password QDialog(parent, message) which MUST have a password() method.
+        :type password_dlg_func: object
         :return: bool Whether operation was successful
+        :rtype: bool
         """
         if not self.master_pass_set():
             return False
 
         pkibundles = []
         if from_filesys and self.PKCS_FILES is not None:
+            user_cancelled = False
             for pkcs_name in self.PKCS_FILES:
+                if user_cancelled:
+                    break
                 pkcs_path = os.path.join(self.PKI_DIR, pkcs_name)
                 if not os.path.exists(pkcs_path):
                     continue
                 psswd = self.PKCS_PASS
-                if self.PKCS_PROTECTED and self.PKCS_PASS != '':
-                    # noinspection PyCallByClass,PyTypeChecker
-                    psswd, ok = QInputDialog.getText(
-                        self.mw,
-                        "Client Certificate Key",
-                        "'{0}' password:".format(pkcs_name), QLineEdit.Normal)
-                    if not ok:
-                        continue
+                title = "Client Certificate Key"
+                message = "Identity '{0}' password:".format(pkcs_name)
+                if self.PKCS_PROTECTED and self.PKCS_PASS == '':
+                    if (password_dlg_func is not None
+                            and callable(password_dlg_func)):
+                        pwd_dlg = password_dlg_func(self.mw, message)
+                        """:type : QDialog"""
+                        if not hasattr(pwd_dlg, 'password'):
+                            self.msg("Password callback's generated QDialog has"
+                                     " no password method")
+                        pwd_dlg.setWindowTitle(title)
+                        if pwd_dlg.exec_():
+                            psswd = pwd_dlg.password()
+                        else:
+                            user_cancelled = True
+                            continue
+                    else:
+                        # noinspection PyCallByClass,PyTypeChecker
+                        psswd, ok = QInputDialog.getText(
+                            self.mw, title,
+                            message, QLineEdit.Normal)
+                        if not ok:
+                            user_cancelled = True
+                            continue
                 # noinspection PyCallByClass,PyTypeChecker
                 bundle = QgsPkiBundle.fromPkcs12Paths(pkcs_path, psswd)
                 if not bundle.isNull():
@@ -191,12 +219,12 @@ class AuthSystem:
                              .format(pkcs_name))
         else:
             def import_identity(parent):
-                dlg = QgsAuthImportIdentityDialog(
+                import_dlg = QgsAuthImportIdentityDialog(
                     QgsAuthImportIdentityDialog.CertIdentity, parent)
-                dlg.setWindowModality(Qt.WindowModal)
-                dlg.resize(400, 250)
-                if dlg.exec_():
-                    bndle = dlg.pkiBundleToImport()
+                import_dlg.setWindowModality(Qt.WindowModal)
+                import_dlg.resize(400, 250)
+                if import_dlg.exec_():
+                    bndle = import_dlg.pkiBundleToImport()
                     if bndle.isNull():
                         self.msg("Could not load identity file")
                         return None, True
@@ -272,9 +300,12 @@ class AuthSystem:
         Import Certificate Authorities into authentication database.
         Certs with identical signatures will not be duplicated.
 
-        :param ca_certs: [QSslCertificate] Certs to add
-        :param from_filesys: bool Skip user interaction and load from filesystem
-        :return: bool Whether operation was successful
+        :param ca_certs: Certs to add
+        :type ca_certs: list of QSslCertificate
+        :param from_filesys: Skip user interaction and load from filesystem
+        :type from_filesys: bool
+        :return: Whether operation was successful
+        :rtype: bool
         """
         if not self.master_pass_set():
             return False
@@ -306,7 +337,7 @@ class AuthSystem:
             QgsAuthManager.instance().rebuildTrustedCaCertsCache()
 
             for ca_cert in ca_certs:
-                # noinspection PyArgumentList
+                # noinspection PyArgumentList,PyCallByClass,PyTypeChecker
                 subj_issu = "{0} ({1})".format(
                     QgsAuthCertUtils.resolvedCertName(ca_cert),
                     QgsAuthCertUtils.resolvedCertName(ca_cert, True)
@@ -322,8 +353,10 @@ class AuthSystem:
         ability to auto-configure an SSL server's cert exception upon connection
         to the server (example: users who have erased the auth database).
 
-        :param from_filesys: bool Skip user interaction and load from filesystem
-        :return: bool Whether operation was successful
+        :param from_filesys: Skip user interaction and load from filesystem
+        :type from_filesys: bool
+        :return: Whether operation was successful
+        :rtype: bool
         """
         if not from_filesys or not self.ADD_SSL_SERVERS:
             return False
@@ -361,6 +394,8 @@ class AuthSystem:
                             config):
                         self.msg("Could not store SSL config for '{0}'"
                                  .format(hostport))
+                    else:
+                        self.servers.append(hostport)
 
         return True
 
@@ -372,9 +407,12 @@ class AuthSystem:
         NOTE: this assumes the individual connections do not already exist.
         If the connection settings do exist, this will OVERWRITE them.
 
-        :param authcfg: str The auth config ID to associate connections with
-        :param from_filesys: bool Skip user interaction and load from filesystem
-        :return: bool Whether operation was successful
+        :param authcfg: The auth config ID to associate connections with
+        :type authcfg: str
+        :param from_filesys: Skip user interaction and load from filesystem
+        :type from_filesys: bool
+        :return: Whether operation was successful
+        :rtype: bool
         """
         if not self.identity_configs:
             self.msg("No authentication configs for imported identities exists")
@@ -482,11 +520,10 @@ class AuthSystem:
         if self.authorities:
             res += "Certificate Authorities imported:\n{0}\n\n".format(
                 "\n".join(["  " + a for a in self.authorities]))
-        if self.servers:
-            res += "SSL server configs created:\n{0}\n\n".format(
-                "\n".join(["  " + s for s in self.servers]))
         if self.connections:
             res += "OWS connection configs created:\n{0}\n\n".format(
                 "\n".join(["  " + c for c in self.connections]))
-
+        if self.servers:
+            res += "SSL server configs created (host:port):\n{0}\n\n".format(
+                "\n".join(["  " + s for s in self.servers]))
         return res
