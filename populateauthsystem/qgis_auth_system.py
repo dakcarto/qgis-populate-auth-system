@@ -154,15 +154,11 @@ class AuthSystem:
                      "Canceling operation.")
         return res
 
-    def populate_identities(self, multiple=False, from_filesys=False,
-                            password_dlg_func=None):
+    def populate_identities(self, from_filesys=False, password_dlg_func=None):
         """
         Import certificate-based identities into authentication database.
         Any CA cert chains contained in any PKCS#12 file will also be added.
 
-        :param multiple: Whether to offer import dialog multiple times during
-        fully user-interactive session
-        :type multiple: bool
         :param from_filesys: Skip user interaction and load from filesystem
         :type from_filesys: bool
         :param password_dlg_func: Callback(parent, message) that returns a
@@ -175,72 +171,66 @@ class AuthSystem:
             return False
 
         pkibundles = []
+        pkcsfiles = []
         if from_filesys and self.PKCS_FILES is not None:
-            user_cancelled = False
             for pkcs_name in self.PKCS_FILES:
-                if user_cancelled:
-                    break
                 pkcs_path = os.path.join(self.PKI_DIR, pkcs_name)
-                if not os.path.exists(pkcs_path):
-                    continue
-                psswd = self.PKCS_PASS
-                title = "Client Certificate Key"
-                message = "Identity '{0}' password:".format(pkcs_name)
-                if self.PKCS_PROTECTED and self.PKCS_PASS == '':
-                    if (password_dlg_func is not None
-                            and callable(password_dlg_func)):
-                        pwd_dlg = password_dlg_func(self.mw, message)
-                        """:type : QDialog"""
-                        if not hasattr(pwd_dlg, 'password'):
-                            self.msg("Password callback's generated QDialog has"
-                                     " no password method")
-                        pwd_dlg.setWindowTitle(title)
-                        if pwd_dlg.exec_():
-                            psswd = pwd_dlg.password()
-                        else:
-                            user_cancelled = True
-                            continue
-                    else:
-                        # noinspection PyCallByClass,PyTypeChecker
-                        psswd, ok = QInputDialog.getText(
-                            self.mw, title,
-                            message, QLineEdit.Normal)
-                        if not ok:
-                            user_cancelled = True
-                            continue
-                # noinspection PyCallByClass,PyTypeChecker
-                bundle = QgsPkiBundle.fromPkcs12Paths(pkcs_path, psswd)
-                if not bundle.isNull():
-                    pkibundles.append(bundle)
-                    if self.PKCS_OWS is not None and self.PKCS_OWS == pkcs_name:
-                            self.identity_ows_sha = bundle.certId()
-                else:
-                    self.msg("Could not load identity file, continuing ({0})"
-                             .format(pkcs_name))
+                if os.path.exists(pkcs_path):
+                    pkcsfiles.append(pkcs_path)
         else:
-            def import_identity(parent):
-                import_dlg = QgsAuthImportIdentityDialog(
-                    QgsAuthImportIdentityDialog.CertIdentity, parent)
-                import_dlg.setWindowModality(Qt.WindowModal)
-                import_dlg.resize(400, 250)
-                if import_dlg.exec_():
-                    bndle = import_dlg.pkiBundleToImport()
-                    if bndle.isNull():
-                        self.msg("Could not load identity file")
-                        return None, True
-                    return bndle, True
-                return None, False
+            # noinspection PyCallByClass,PyTypeChecker
+            pkcsfiles = QFileDialog.getOpenFileNames(
+                self,
+                "Select PKCS#12 identities",
+                os.path.expanduser('~'),
+                "PKCS#12 (*.p12 *.pfx)")
 
-            while True:
-                pkibundle, imprt_res = import_identity(self.mw)
-                if pkibundle is not None:
-                    pkibundles.append(pkibundle)
-                if multiple and imprt_res:
-                    continue
-                break
+        if not pkcsfiles:
+            self.msg("No identity files found or selected")
+
+        for pkcs_path in pkcsfiles:
+            pkcs_name = os.path.basename(pkcs_path)
+            psswd = self.PKCS_PASS if from_filesys else ''
+            title = "Client Certificate Key"
+            message = "Identity '{0}' password:".format(pkcs_name)
+            if (not from_filesys
+                    or (from_filesys
+                        and self.PKCS_PROTECTED and self.PKCS_PASS == '')):
+                if (password_dlg_func is not None
+                        and callable(password_dlg_func)):
+                    pwd_dlg = password_dlg_func(self.mw, message)
+                    """:type : QDialog"""
+                    if not hasattr(pwd_dlg, 'password'):
+                        self.msg("Password callback's generated QDialog has"
+                                 " no password method")
+                    pwd_dlg.setWindowTitle(title)
+                    if pwd_dlg.exec_():
+                        psswd = pwd_dlg.password()
+                    else:
+                        return False
+                else:
+                    # noinspection PyCallByClass,PyTypeChecker
+                    psswd, ok = QInputDialog.getText(
+                        self.mw, title,
+                        message, QLineEdit.Password)
+                    if not ok:
+                        return False
+            # noinspection PyCallByClass,PyTypeChecker
+            bundle = QgsPkiBundle.fromPkcs12Paths(pkcs_path, psswd)
+            if not bundle.isNull():
+                pkibundles.append(bundle)
+                if self.PKCS_OWS is not None and self.PKCS_OWS == pkcs_name:
+                        self.identity_ows_sha = bundle.certId()
+            else:
+                self.msg("Could not load identity file '{0}'"
+                         .format(pkcs_name))
+                return False
 
         if not pkibundles:
             return False
+
+        # TODO: add combobox for selecting identity sha for identity_ows_sha
+        #       for manual runs
 
         # Now try to store identities in the database
         for bundle in pkibundles:
