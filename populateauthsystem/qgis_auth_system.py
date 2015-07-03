@@ -78,29 +78,23 @@ class AuthSystem:
     # File name of identity, whose related auth config is applied to OWS configs
     PKCS_OWS = 'identity1.p12'  # OR  = None
 
-    def __init__(self, qgis_iface, messagebar=None):
+    def __init__(self, parent=None, in_plugin=False,
+                 qgis_iface=None, messagebar=None):
+
+        self.parent = parent
+        self.in_plugin = in_plugin
         # note, this could be a mock iface implementation, as when testing
         self.iface = qgis_iface
         """:type : QgisInterface"""
 
-        self.mw = None
-        if self.iface is not None:
-            self.mw = iface.mainWindow()
+        if self.parent is None and self.in_plugin:
+            self.parent = self.iface.mainWindow()
             """:type : QMainWindow"""
 
-        self.in_plugin = True
-        if self.mw is None:
-            # we are running outside of a plugin
-            self.in_plugin = False
-
-        self.msgbar = None
-        if self.in_plugin:
-            if messagebar is not None:
-                self.msgbar = messagebar
-                """:type : QgsMessageBar"""
-            else:
-                self.msgbar = self.iface.messageBar()
-                """:type : QgsMessageBar"""
+        self.msgbar = messagebar
+        if self.msgbar is None and self.in_plugin:
+            self.msgbar = self.iface.messageBar()
+            """:type : QgsMessageBar"""
 
         # Result caches
         # dictionary of identity cert sha and its related auth config ID:
@@ -125,17 +119,17 @@ class AuthSystem:
 
     def msg(self, msg, kind='warn'):
         if kind == 'warn':
-            if self.in_plugin:
+            if hasattr(self.msgbar, 'pushWarning'):
                 self.msgbar.pushWarning(self.TITLE, msg)
             else:
                 # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
-                QMessageBox.warning(self.mw, self.TITLE, msg)
+                QMessageBox.warning(self.parent, self.TITLE, msg)
         elif kind == 'info':
-            if self.in_plugin:
+            if hasattr(self.msgbar, 'pushInfo'):
                 self.msgbar.pushInfo(self.TITLE, msg)
             else:
                 # noinspection PyTypeChecker,PyArgumentList, PyCallByClass
-                QMessageBox.information(self.mw, self.TITLE, msg)
+                QMessageBox.information(self.parent, self.TITLE, msg)
 
     def master_pass_set(self):
         """
@@ -177,60 +171,72 @@ class AuthSystem:
                 pkcs_path = os.path.join(self.PKI_DIR, pkcs_name)
                 if os.path.exists(pkcs_path):
                     pkcsfiles.append(pkcs_path)
-        else:
-            # noinspection PyCallByClass,PyTypeChecker
-            pkcsfiles = QFileDialog.getOpenFileNames(
-                self,
-                "Select PKCS#12 identities",
-                os.path.expanduser('~'),
-                "PKCS#12 (*.p12 *.pfx)")
 
-        if not pkcsfiles:
-            self.msg("No identity files found or selected")
+            if not pkcsfiles:
+                self.msg("No identity files found")
 
-        for pkcs_path in pkcsfiles:
-            pkcs_name = os.path.basename(pkcs_path)
-            psswd = self.PKCS_PASS if from_filesys else ''
-            title = "Client Certificate Key"
-            message = "Identity '{0}' password:".format(pkcs_name)
-            if (not from_filesys
-                    or (from_filesys
-                        and self.PKCS_PROTECTED and self.PKCS_PASS == '')):
-                if (password_dlg_func is not None
-                        and callable(password_dlg_func)):
-                    pwd_dlg = password_dlg_func(self.mw, message)
-                    """:type : QDialog"""
-                    if not hasattr(pwd_dlg, 'password'):
-                        self.msg("Password callback's generated QDialog has"
-                                 " no password method")
-                    pwd_dlg.setWindowTitle(title)
-                    if pwd_dlg.exec_():
-                        psswd = pwd_dlg.password()
+            for pkcs_path in pkcsfiles:
+                pkcs_name = os.path.basename(pkcs_path)
+                psswd = self.PKCS_PASS
+                title = "Client Certificate Key"
+                message = "Identity '{0}' password:".format(pkcs_name)
+                if (from_filesys
+                        and self.PKCS_PROTECTED and self.PKCS_PASS == ''):
+                    if (password_dlg_func is not None
+                            and callable(password_dlg_func)):
+                        pwd_dlg = password_dlg_func(self.parent, message)
+                        """:type : QDialog"""
+                        if not hasattr(pwd_dlg, 'password'):
+                            self.msg("Password callback's generated QDialog has"
+                                     " no password method")
+                        pwd_dlg.setWindowTitle(title)
+                        if pwd_dlg.exec_():
+                            psswd = pwd_dlg.password()
+                        else:
+                            return False
                     else:
-                        return False
-                else:
-                    # noinspection PyCallByClass,PyTypeChecker
-                    psswd, ok = QInputDialog.getText(
-                        self.mw, title,
-                        message, QLineEdit.Password)
-                    if not ok:
-                        return False
-            # noinspection PyCallByClass,PyTypeChecker
-            bundle = QgsPkiBundle.fromPkcs12Paths(pkcs_path, psswd)
-            if not bundle.isNull():
-                pkibundles.append(bundle)
-                if self.PKCS_OWS is not None and self.PKCS_OWS == pkcs_name:
+                        # noinspection PyCallByClass,PyTypeChecker
+                        psswd, ok = QInputDialog.getText(
+                            self.parent, title,
+                            message, QLineEdit.Password)
+                        if not ok:
+                            return False
+                # noinspection PyCallByClass,PyTypeChecker
+                bundle = QgsPkiBundle.fromPkcs12Paths(pkcs_path, psswd)
+                if not bundle.isNull():
+                    pkibundles.append(bundle)
+                    if self.PKCS_OWS is not None and self.PKCS_OWS == pkcs_name:
                         self.identity_ows_sha = bundle.certId()
-            else:
-                self.msg("Could not load identity file '{0}'"
-                         .format(pkcs_name))
-                return False
+                else:
+                    self.msg("Could not load identity file '{0}'"
+                             .format(pkcs_name))
+                    return False
+
+        else:  # interactive session
+            def import_identity(parent):
+                import_dlg = QgsAuthImportIdentityDialog(
+                    QgsAuthImportIdentityDialog.CertIdentity, parent)
+                import_dlg.setWindowModality(Qt.WindowModal)
+                import_dlg.resize(400, 250)
+                if import_dlg.exec_():
+                    bndle = import_dlg.pkiBundleToImport()
+                    if bndle.isNull():
+                        self.msg("Could not load identity file")
+                        return None, True
+                    return bndle, True
+                return None, False
+
+            while True:
+                pkibundle, imprt_res = import_identity(self.parent)
+                if pkibundle is not None:
+                    pkibundles.append(pkibundle)
+                if imprt_res:
+                    continue
+                break
 
         if not pkibundles:
+            self.msg("No identity bundles to import")
             return False
-
-        # TODO: add combobox for selecting identity sha for identity_ows_sha
-        #       for manual runs
 
         # Now try to store identities in the database
         for bundle in pkibundles:
@@ -291,7 +297,7 @@ class AuthSystem:
         Certs with identical signatures will not be duplicated.
 
         :param ca_certs: Certs to add
-        :type ca_certs: list of QSslCertificate
+        :type ca_certs: list[QSslCertificate]
         :param from_filesys: Skip user interaction and load from filesystem
         :type from_filesys: bool
         :return: Whether operation was successful
@@ -301,19 +307,21 @@ class AuthSystem:
             return False
 
         if from_filesys:
-            if self.CA_CERT_CHAIN is not None:
+            if self.CA_CERT_CHAIN is not None:  # else skip silently
                 ca_certs_path = os.path.join(self.PKI_DIR, self.CA_CERT_CHAIN)
                 if os.path.exists(ca_certs_path):
                     # noinspection PyArgumentList,PyTypeChecker,PyCallByClass
                     ca_certs = QgsAuthCertUtils.certsFromFile(ca_certs_path)
         elif ca_certs is None:
-            dlg = QgsAuthImportCertDialog(self.mw,
+            dlg = QgsAuthImportCertDialog(self.parent,
                                           QgsAuthImportCertDialog.CaFilter,
                                           QgsAuthImportCertDialog.FileInput)
             dlg.setWindowModality(Qt.WindowModal)
             dlg.resize(400, 250)
             if dlg.exec_():
                 ca_certs = dlg.certificatesToImport()
+            else:
+                return False  # report failure since import was selected by user
 
         if ca_certs is not None:
             # noinspection PyArgumentList
