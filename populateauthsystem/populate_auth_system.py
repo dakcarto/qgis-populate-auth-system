@@ -69,7 +69,7 @@ class PopulateAuthSystem:
                 QCoreApplication.installTranslator(self.translator)
 
         # Declare instance attributes
-        self.title = self.tr(u'Populate Authentication Database')
+        self.title = self.tr(u'Populate Authentication System')
         self.action = None
 
         # Set up automated enacting of plugin at end of app launch

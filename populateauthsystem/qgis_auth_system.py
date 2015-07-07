@@ -37,6 +37,21 @@ from PyQt4.QtNetwork import *
 
 
 class AuthSystem:
+    """
+    Interface to the authentication system for the purpose of populating auth
+    components and optionally configuring services with auth configs.
+
+    The class variables, other than TITLE, are referenced during semi-automated
+    population, and MUST be reviewed/edited. Likewise review/edit the following
+    optional population functions, which just have default localhost examples:
+
+    - :func:`populate_servers(...)`
+    - :func:`config_ows_connections(...)`
+
+    .. note::
+        Inbetween successive population attempts you should clean up results by
+        calling :func:`clear_results()`.
+    """
 
     # Title used in user messages and dialog title bars
     TITLE = 'Authentication System'
@@ -157,7 +172,7 @@ class AuthSystem:
         :type from_filesys: bool
         :param password_dlg_func: Callback(parent, message) that returns a
         password QDialog(parent, message) which MUST have a password() method.
-        :type password_dlg_func: object
+        :type password_dlg_func: (object, str) -> QDialog
         :return: bool Whether operation was successful
         :rtype: bool
         """
@@ -212,10 +227,26 @@ class AuthSystem:
                              .format(pkcs_name))
                     return False
 
-        else:  # interactive session
+        else:  # interactive session, which uses the core GUI widget to import
             def import_identity(parent):
                 import_dlg = QgsAuthImportIdentityDialog(
                     QgsAuthImportIdentityDialog.CertIdentity, parent)
+
+                # default to PKCS#12 in combobox
+                cmbbx = import_dlg.findChild(QComboBox, 'cmbIdentityTypes')
+                """:type : QComboBox"""
+                cmbbx.setCurrentIndex(cmbbx.findData(
+                    QgsAuthImportIdentityDialog.PkiPkcs12))
+
+                # change buttons to hint at multiple identity importing
+                btnbox = import_dlg.findChild(QDialogButtonBox, 'buttonBox')
+                """:type : QDialogButtonBox"""
+                okbtn = btnbox.button(QDialogButtonBox.Ok)
+                okbtn.setText('Import && Import Another...')
+                if pkibundles:  # something has already been imported
+                    cancelbtn = btnbox.button(QDialogButtonBox.Cancel)
+                    cancelbtn.setText('Done')
+
                 import_dlg.setWindowModality(Qt.WindowModal)
                 import_dlg.resize(400, 250)
                 if import_dlg.exec_():
@@ -289,7 +320,7 @@ class AuthSystem:
             if bundle_ca_chain:  # this can fail (user is notified)
                 self.populate_ca_certs(bundle_ca_chain)
 
-        return True
+        return len(self.identity_configs) > 0
 
     def populate_ca_certs(self, ca_certs=None, from_filesys=False):
         """

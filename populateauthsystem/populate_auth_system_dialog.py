@@ -98,6 +98,9 @@ class PkiIdentitySelectDialog(PopulateBasicDialog):
             self, parent=parent,
             buttons=QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
 
+        cancelbtn = self.buttonbox.button(QDialogButtonBox.Cancel)
+        cancelbtn.setText('Skip')
+
         self.idents1 = idents1
         self.idents2 = idents2
 
@@ -312,7 +315,7 @@ class PopulateAuthSystemDialog(QDialog, FORM_CLASS):
 
         identity_ids = authsys.identity_configs.keys()
 
-        if self.radioReplaceIdent.isChecked():
+        if identity_ids and self.radioReplaceIdent.isChecked():
             new_identities = []
             for ident_id in identity_ids:
                 # noinspection PyArgumentList
@@ -347,7 +350,7 @@ class PopulateAuthSystemDialog(QDialog, FORM_CLASS):
                 else:
                     self.msgbar.pushInfo(
                         self.short_title,
-                        "Identity replacement cancelled")
+                        "Identity replacement skipped")
             else:
                 self.msgbar.pushInfo(
                     self.short_title,
